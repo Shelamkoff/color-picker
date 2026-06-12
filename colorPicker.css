@@ -1,0 +1,182 @@
+/* Color Picker — reusable component styles.
+   Inherits theme variables from parent: --oe-bg, --oe-border, --oe-text-*, --oe-toolbar-*, etc. */
+
+.oe-color-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 224px;
+  padding: 12px;
+  background: var(--oe-toolbar-bg);
+  border: 1px solid var(--oe-toolbar-border);
+  border-radius: var(--oe-radius);
+  box-shadow: var(--oe-toolbar-shadow);
+  z-index: 30;
+}
+
+.oe-color-sv {
+  position: relative;
+  width: 200px;
+  height: 140px;
+  border-radius: 6px;
+  cursor: crosshair;
+  background:
+    linear-gradient(to bottom, transparent 0%, #000 100%),
+    linear-gradient(to right, #fff 0%, transparent 100%);
+  background-color: hsl(0, 100%, 50%);
+  user-select: none;
+}
+
+.oe-color-sv__cursor {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.oe-color-hue {
+  position: relative;
+  width: 200px;
+  height: 12px;
+  margin-top: 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: linear-gradient(to right,
+    #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  user-select: none;
+}
+
+.oe-color-hue__cursor {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.oe-color-alpha {
+  --oe-checker: repeating-conic-gradient(
+    rgba(128, 128, 128, 0.25) 0% 25%,
+    transparent 0% 50%
+  ) 0 0 / 8px 8px;
+  position: relative;
+  width: 200px;
+  height: 12px;
+  margin-top: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  background:
+    linear-gradient(to right, rgba(255,255,255,0), #fff),
+    var(--oe-checker);
+}
+
+.oe-color-alpha__cursor {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.oe-color-bottom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.oe-color-preview {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--oe-border);
+  flex-shrink: 0;
+  background: repeating-conic-gradient(
+    rgba(128, 128, 128, 0.25) 0% 25%,
+    transparent 0% 50%
+  ) 0 0 / 6px 6px;
+}
+
+.oe-color-format {
+  padding: 4px 5px;
+  background: var(--oe-bg);
+  border: 1px solid var(--oe-border);
+  border-radius: var(--oe-radius-sm);
+  color: var(--oe-text-3);
+  font-size: 10px;
+  font-family: var(--oe-font), sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+  transition: color 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+.oe-color-format:hover {
+  color: var(--oe-text-1);
+  border-color: var(--oe-text-3);
+}
+
+.oe-color-hex {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  background: var(--oe-bg);
+  border: 1px solid var(--oe-border);
+  border-radius: var(--oe-radius-sm);
+  color: var(--oe-text-1);
+  font-size: 11px;
+  font-family: var(--oe-font-mono, monospace);
+  outline: none;
+}
+
+.oe-color-hex:focus {
+  border-color: var(--oe-border-focus);
+}
+
+.oe-color-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--oe-radius-sm);
+  color: var(--oe-text-3);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.oe-color-btn:hover {
+  background: var(--oe-card-hover);
+}
+
+.oe-color-btn--apply:hover {
+  color: var(--oe-success);
+}
+
+.oe-color-btn--remove:hover {
+  color: var(--oe-danger);
+}
+
+.oe-color-btn--eyedropper:hover {
+  color: var(--oe-text-1);
+}
