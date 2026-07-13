@@ -1,0 +1,40 @@
+{
+  "name": "@shelamkoff/color-picker",
+  "version": "1.0.0",
+  "description": "Framework-agnostic accessible color picker and color conversion utilities",
+  "type": "module",
+  "sideEffects": ["**/*.css"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./color-math": {
+      "types": "./dist/colorMath.d.ts",
+      "import": "./dist/colorMath.js"
+    },
+    "./styles.css": "./dist/colorPicker.css",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "README.ru.md", "LICENSE"],
+  "scripts": {
+    "build": "node scripts/build-package.mjs",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm test",
+    "prepack": "npm run build"
+  },
+  "keywords": ["color-picker", "color", "accessibility", "framework-agnostic", "esm"],
+  "author": "Shelamkoff",
+  "engines": { "node": ">=20" },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shelamkoff/color-picker.git"
+  },
+  "homepage": "https://github.com/Shelamkoff/color-picker#readme",
+  "bugs": { "url": "https://github.com/Shelamkoff/color-picker/issues" },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

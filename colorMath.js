@@ -4,7 +4,10 @@
  */
 
 /** Available color format names */
-export const COLOR_FORMATS = ['HEX', 'RGB', 'HSL']
+export const COLOR_FORMATS = Object.freeze(['HEX', 'RGB', 'HSL'])
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+const normalizeHue = (value) => ((value % 360) + 360) % 360
 
 /**
  * Convert HSV to hex string.
@@ -27,6 +30,9 @@ export function hsvToHex(h, s, v) {
  * @returns {{ h: number, s: number, v: number }}
  */
 export function rgbToHsv(r, g, b) {
+  r = clamp(Number.isFinite(r) ? r : 0, 0, 1)
+  g = clamp(Number.isFinite(g) ? g : 0, 0, 1)
+  b = clamp(Number.isFinite(b) ? b : 0, 0, 1)
   const max = Math.max(r, g, b)
   const min = Math.min(r, g, b)
   const d = max - min
@@ -47,10 +53,13 @@ export function rgbToHsv(r, g, b) {
  * @returns {{ h: number, s: number, v: number }}
  */
 export function hexToHsv(hex) {
+  const match = typeof hex === 'string' ? hex.trim().match(/^#?([0-9a-f]{6})$/i) : null
+  if (!match) throw new TypeError(`Invalid six-digit hex color: ${hex}`)
+  const value = match[1]
   return rgbToHsv(
-    parseInt(hex.slice(1, 3), 16) / 255,
-    parseInt(hex.slice(3, 5), 16) / 255,
-    parseInt(hex.slice(5, 7), 16) / 255,
+    parseInt(value.slice(0, 2), 16) / 255,
+    parseInt(value.slice(2, 4), 16) / 255,
+    parseInt(value.slice(4, 6), 16) / 255,
   )
 }
 
@@ -62,6 +71,9 @@ export function hexToHsv(hex) {
  * @returns {{ r: number, g: number, b: number }}
  */
 export function hsvToRgb(h, s, v) {
+  h = normalizeHue(Number.isFinite(h) ? h : 0)
+  s = clamp(Number.isFinite(s) ? s : 0, 0, 1)
+  v = clamp(Number.isFinite(v) ? v : 0, 0, 1)
   const c = v * s
   const x = c * (1 - Math.abs((h / 60) % 2 - 1))
   const m = v - c
@@ -87,6 +99,9 @@ export function hsvToRgb(h, s, v) {
  * @returns {{ h: number, s: number, l: number }}
  */
 export function hsvToHsl(h, s, v) {
+  h = normalizeHue(Number.isFinite(h) ? h : 0)
+  s = clamp(Number.isFinite(s) ? s : 0, 0, 1)
+  v = clamp(Number.isFinite(v) ? v : 0, 0, 1)
   const l = v * (1 - s / 2)
   const sl = (l === 0 || l === 1) ? 0 : (v - l) / Math.min(l, 1 - l)
   return { h: Math.round(h), s: Math.round(sl * 100), l: Math.round(l * 100) }
@@ -102,6 +117,8 @@ export function hsvToHsl(h, s, v) {
  * @returns {string}
  */
 export function formatColor(h, s, v, a, fmt) {
+  if (!COLOR_FORMATS.includes(fmt)) throw new TypeError(`Unsupported color format: ${fmt}`)
+  a = clamp(Number.isFinite(a) ? a : 1, 0, 1)
   const hasAlpha = a < 1
   if (fmt === 'RGB') {
     const { r, g, b } = hsvToRgb(h, s, v)
@@ -128,7 +145,7 @@ export function formatColor(h, s, v, a, fmt) {
  * @returns {number}
  */
 export function roundAlpha(a) {
-  return Math.round(a * 100) / 100
+  return Math.round(clamp(Number.isFinite(a) ? a : 1, 0, 1) * 100) / 100
 }
 
 /**
@@ -137,11 +154,12 @@ export function roundAlpha(a) {
  * @returns {{ hex: string, alpha: number }}
  */
 export function parseRgbCss(css) {
-  const m = css.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?/)
+  const m = css.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/i)
   if (!m) return { hex: '#ffffff', alpha: 1 }
-  const h = (/** @type {string} */ n) => Number(n).toString(16).padStart(2, '0')
+  const h = (/** @type {string} */ n) => clamp(Number(n), 0, 255).toString(16).padStart(2, '0')
   const hex = '#' + h(/** @type {string} */ (m[1])) + h(/** @type {string} */ (m[2])) + h(/** @type {string} */ (m[3]))
-  const alpha = m[4] !== undefined ? parseFloat(m[4]) : 1
+  const parsedAlpha = m[4] !== undefined ? parseFloat(m[4]) : 1
+  const alpha = clamp(Number.isFinite(parsedAlpha) ? parsedAlpha : 1, 0, 1)
   return { hex, alpha }
 }
 
@@ -175,15 +193,18 @@ export function parseColorInput(str) {
   // rgb(r, g, b) or rgba(r, g, b, a)
   m = str.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+))?\s*\)$/)
   if (m) {
+    const r = Number(m[1]), g = Number(m[2]), b = Number(m[3])
     const a = m[4] !== undefined ? parseFloat(m[4]) : 1
-    return { ...rgbToHsv(Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255), a }
+    if (r > 255 || g > 255 || b > 255 || !Number.isFinite(a) || a < 0 || a > 1) return null
+    return { ...rgbToHsv(r / 255, g / 255, b / 255), a }
   }
 
   // hsl(h, s%, l%) or hsla(h, s%, l%, a)
-  m = str.match(/^hsla?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%\s*(?:,\s*([\d.]+))?\s*\)$/)
+  m = str.match(/^hsla?\s*\(\s*(-?[\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*(?:,\s*([\d.]+))?\s*\)$/)
   if (m) {
-    const hh = Number(m[1]), sl = Number(m[2]) / 100, l = Number(m[3]) / 100
+    const hh = normalizeHue(Number(m[1])), sl = Number(m[2]) / 100, l = Number(m[3]) / 100
     const a = m[4] !== undefined ? parseFloat(m[4]) : 1
+    if (![hh, sl, l, a].every(Number.isFinite) || sl < 0 || sl > 1 || l < 0 || l > 1 || a < 0 || a > 1) return null
     const vv = l + sl * Math.min(l, 1 - l)
     const sv = vv === 0 ? 0 : 2 * (1 - l / vv)
     return { h: hh, s: sv, v: vv, a }

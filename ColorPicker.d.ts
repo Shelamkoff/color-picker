@@ -3,7 +3,7 @@
  *   onApply?: (cssColor: string) => void,
  *   onRemove?: () => void,
  *   onChange?: (cssColor: string) => void,
- *   onFormatChange?: (formatted: string, format: string) => void,
+ *   onFormatChange?: (formatted: string, format: import('./colorMath.js').ColorFormat) => void,
  *   showRemove?: boolean,
  * }} ColorPickerOptions
  */
@@ -18,7 +18,7 @@ export class ColorPicker {
     get element(): HTMLElement;
     /**
      * Open the picker with a given color.
-     * @param {string} hex
+     * @param {string} hex Any supported CSS color value.
      * @param {number} [alpha]
      */
     open(hex: string, alpha?: number): void;
@@ -30,6 +30,6 @@ export type ColorPickerOptions = {
     onApply?: (cssColor: string) => void;
     onRemove?: () => void;
     onChange?: (cssColor: string) => void;
-    onFormatChange?: (formatted: string, format: string) => void;
+    onFormatChange?: (formatted: string, format: import('./colorMath.js').ColorFormat) => void;
     showRemove?: boolean;
 };

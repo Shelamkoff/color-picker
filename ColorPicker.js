@@ -1,5 +1,5 @@
 import {
-  COLOR_FORMATS, hsvToHex, hexToHsv, hsvToRgb,
+  COLOR_FORMATS, hexToHsv, hsvToRgb,
   formatColor, roundAlpha, parseColorInput,
 } from './colorMath.js'
 
@@ -25,7 +25,7 @@ function ce(tag, className, attrs) {
  *   onApply?: (cssColor: string) => void,
  *   onRemove?: () => void,
  *   onChange?: (cssColor: string) => void,
- *   onFormatChange?: (formatted: string, format: string) => void,
+ *   onFormatChange?: (formatted: string, format: import('./colorMath.js').ColorFormat) => void,
  *   showRemove?: boolean,
  * }} ColorPickerOptions
  */
@@ -47,6 +47,11 @@ export class ColorPicker {
   #val = 1
   #alpha = 1
   #colorFormat = 'HEX'
+  #destroyed = false
+  /** @type {(() => void) | null} */
+  #stopDrag = null
+  #asyncVersion = 0
+  #listenerController = new AbortController()
 
   // DOM refs
   /** @type {HTMLElement | null} */ #svArea = null
@@ -61,7 +66,18 @@ export class ColorPicker {
 
   /** @param {ColorPickerOptions} [options] */
   constructor(options = {}) {
-    this.#options = options
+    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+      throw new TypeError('ColorPicker options must be an object')
+    }
+    for (const callback of ['onApply', 'onRemove', 'onChange', 'onFormatChange']) {
+      if (options[callback] !== undefined && typeof options[callback] !== 'function') {
+        throw new TypeError(`ColorPicker ${callback} must be a function`)
+      }
+    }
+    if (options.showRemove !== undefined && typeof options.showRemove !== 'boolean') {
+      throw new TypeError('ColorPicker showRemove must be a boolean')
+    }
+    this.#options = { ...options }
     this.#el = this.#build()
   }
 
@@ -72,54 +88,82 @@ export class ColorPicker {
 
   /**
    * Open the picker with a given color.
-   * @param {string} hex
+   * @param {string} hex Any supported CSS color value.
    * @param {number} [alpha]
    */
-  open(hex, alpha = 1) {
-    const hsv = hexToHsv(hex)
-    this.#hue = hsv.h
-    this.#sat = hsv.s
-    this.#val = hsv.v
-    this.#alpha = alpha
+  open(hex, alpha) {
+    if (this.#destroyed) throw new Error('Cannot open a destroyed ColorPicker')
+    const parsed = parseColorInput(hex)
+    if (!parsed) throw new TypeError(`Invalid color: ${hex}`)
+    this.#hue = parsed.h
+    this.#sat = parsed.s
+    this.#val = parsed.v
+    const resolvedAlpha = alpha ?? parsed.a
+    if (!Number.isFinite(resolvedAlpha)) throw new RangeError('Color alpha must be a finite number')
+    this.#alpha = Math.max(0, Math.min(1, resolvedAlpha))
     this.#updateUI()
     this.#el.style.display = ''
   }
 
   close() {
+    this.#asyncVersion += 1
+    this.#stopDrag?.()
+    this.#stopDrag = null
     this.#el.style.display = 'none'
   }
 
   destroy() {
+    if (this.#destroyed) return
+    this.#destroyed = true
+    this.#asyncVersion += 1
+    this.#stopDrag?.()
+    this.#stopDrag = null
+    this.#listenerController.abort()
+    this.#options = {}
     this.#el.remove()
   }
 
   #build() {
     const root = ce('div', 'oe-color-dropdown')
     root.style.display = 'none'
+    root.setAttribute('role', 'dialog')
+    root.setAttribute('aria-label', 'Color picker')
 
     root.addEventListener('mousedown', (e) => {
       if (e.target === this.#colorInput) return
       e.preventDefault()
       e.stopPropagation()
-    })
+    }, { signal: this.#listenerController.signal })
 
     // SV area
-    this.#svArea = ce('div', 'oe-color-sv')
+    this.#svArea = ce('div', 'oe-color-sv', {
+      role: 'slider', tabindex: '0', 'aria-label': 'Saturation and brightness',
+      'aria-valuemin': '0', 'aria-valuemax': '100',
+    })
     this.#svCursor = ce('div', 'oe-color-sv__cursor')
     this.#svArea.appendChild(this.#svCursor)
-    this.#svArea.addEventListener('mousedown', (e) => this.#startDrag(this.#handleSvDrag, e))
+    this.#svArea.addEventListener('pointerdown', (e) => this.#startDrag(this.#handleSvDrag, e), { signal: this.#listenerController.signal })
+    this.#svArea.addEventListener('keydown', (e) => this.#handleSvKeydown(e), { signal: this.#listenerController.signal })
 
     // Hue bar
-    this.#hueBar = ce('div', 'oe-color-hue')
+    this.#hueBar = ce('div', 'oe-color-hue', {
+      role: 'slider', tabindex: '0', 'aria-label': 'Hue',
+      'aria-valuemin': '0', 'aria-valuemax': '360',
+    })
     this.#hueCursor = ce('div', 'oe-color-hue__cursor')
     this.#hueBar.appendChild(this.#hueCursor)
-    this.#hueBar.addEventListener('mousedown', (e) => this.#startDrag(this.#handleHueDrag, e))
+    this.#hueBar.addEventListener('pointerdown', (e) => this.#startDrag(this.#handleHueDrag, e), { signal: this.#listenerController.signal })
+    this.#hueBar.addEventListener('keydown', (e) => this.#handleHueKeydown(e), { signal: this.#listenerController.signal })
 
     // Alpha bar
-    this.#alphaBar = ce('div', 'oe-color-alpha')
+    this.#alphaBar = ce('div', 'oe-color-alpha', {
+      role: 'slider', tabindex: '0', 'aria-label': 'Opacity',
+      'aria-valuemin': '0', 'aria-valuemax': '100',
+    })
     this.#alphaCursor = ce('div', 'oe-color-alpha__cursor')
     this.#alphaBar.appendChild(this.#alphaCursor)
-    this.#alphaBar.addEventListener('mousedown', (e) => this.#startDrag(this.#handleAlphaDrag, e))
+    this.#alphaBar.addEventListener('pointerdown', (e) => this.#startDrag(this.#handleAlphaDrag, e), { signal: this.#listenerController.signal })
+    this.#alphaBar.addEventListener('keydown', (e) => this.#handleAlphaKeydown(e), { signal: this.#listenerController.signal })
 
     // Bottom controls
     const bottom = ce('div', 'oe-color-bottom')
@@ -127,6 +171,7 @@ export class ColorPicker {
     this.#previewEl = ce('div', 'oe-color-preview')
 
     this.#formatBtn = ce('button', 'oe-color-format', { type: 'button' })
+    this.#formatBtn.setAttribute('aria-label', 'Change color format')
     this.#formatBtn.textContent = this.#colorFormat
     this.#formatBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation()
@@ -134,7 +179,7 @@ export class ColorPicker {
       this.#colorFormat = COLOR_FORMATS[(idx + 1) % COLOR_FORMATS.length] ?? 'HEX'
       this.#updateUI()
       this.#notifyFormatChange()
-    })
+    }, { signal: this.#listenerController.signal })
 
     this.#colorInput = /** @type {HTMLInputElement} */ (document.createElement('input'))
     this.#colorInput.type = 'text'
@@ -150,11 +195,12 @@ export class ColorPicker {
         e.preventDefault()
         this.close()
       }
-    })
-    this.#colorInput.addEventListener('input', () => this.#onInputChange())
+    }, { signal: this.#listenerController.signal })
+    this.#colorInput.addEventListener('input', () => this.#onInputChange(), { signal: this.#listenerController.signal })
 
     // Eyedropper
     const eyedropperBtn = ce('button', 'oe-color-btn oe-color-btn--eyedropper', { type: 'button' })
+    eyedropperBtn.setAttribute('aria-label', 'Pick color from screen')
     eyedropperBtn.innerHTML = ICON_EYEDROPPER
     // @ts-ignore — EyeDropper Web API
     if (typeof window.EyeDropper === 'undefined') eyedropperBtn.style.display = 'none'
@@ -164,30 +210,34 @@ export class ColorPicker {
       if (typeof window.EyeDropper === 'undefined') return
       // @ts-ignore
       const dropper = new window.EyeDropper()
+      const asyncVersion = ++this.#asyncVersion
       dropper.open().then((/** @type {{ sRGBHex: string }} */ result) => {
+        if (this.#destroyed || this.#asyncVersion !== asyncVersion) return
         const hsv = hexToHsv(result.sRGBHex)
         this.#hue = hsv.h; this.#sat = hsv.s; this.#val = hsv.v; this.#alpha = 1
         this.#updateUI()
         this.#options.onChange?.(this.#toCss())
       }).catch(() => {})
-    })
+    }, { signal: this.#listenerController.signal })
 
     // Apply
     const applyBtn = ce('button', 'oe-color-btn oe-color-btn--apply', { type: 'button' })
+    applyBtn.setAttribute('aria-label', 'Apply color')
     applyBtn.innerHTML = ICON_CHECK
     applyBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation()
       this.#options.onApply?.(this.#toCss())
-    })
+    }, { signal: this.#listenerController.signal })
 
     // Remove
     if (this.#options.showRemove !== false) {
       const removeBtn = ce('button', 'oe-color-btn oe-color-btn--remove', { type: 'button' })
+      removeBtn.setAttribute('aria-label', 'Remove color')
       removeBtn.innerHTML = ICON_REMOVE
       removeBtn.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation()
         this.#options.onRemove?.()
-      })
+      }, { signal: this.#listenerController.signal })
       bottom.append(this.#previewEl, this.#formatBtn, this.#colorInput, eyedropperBtn, applyBtn, removeBtn)
     } else {
       bottom.append(this.#previewEl, this.#formatBtn, this.#colorInput, eyedropperBtn, applyBtn)
@@ -205,6 +255,7 @@ export class ColorPicker {
     this.#svCursor.style.top = `${(1 - this.#val) * 100}%`
     this.#hueCursor.style.left = `${(this.#hue / 360) * 100}%`
     this.#alphaCursor.style.left = `${this.#alpha * 100}%`
+    this.#updateSliderAria()
 
     const { r, g, b } = hsvToRgb(this.#hue, this.#sat, this.#val)
     const rgbStr = `${r}, ${g}, ${b}`
@@ -234,6 +285,7 @@ export class ColorPicker {
     const parsed = parseColorInput(this.#colorInput.value)
     if (parsed) {
       this.#hue = parsed.h; this.#sat = parsed.s; this.#val = parsed.v; this.#alpha = parsed.a
+      this.#updateUI()
       this.#options.onApply?.(this.#toCss())
     }
   }
@@ -254,52 +306,144 @@ export class ColorPicker {
       const rgbStr = `${r}, ${g}, ${b}`
       this.#alphaBar.style.background =
         `linear-gradient(to right, rgba(${rgbStr}, 0), rgb(${rgbStr})), var(--oe-checker)`
+      this.#updateSliderAria()
       this.#options.onChange?.(this.#toCss())
     }
   }
 
-  /** @type {(e: MouseEvent) => void} */
+  #updateSliderAria() {
+    this.#svArea?.setAttribute('aria-valuenow', String(Math.round(this.#sat * 100)))
+    this.#svArea?.setAttribute('aria-valuetext', `Saturation ${Math.round(this.#sat * 100)}%, brightness ${Math.round(this.#val * 100)}%`)
+    this.#hueBar?.setAttribute('aria-valuenow', String(Math.round(this.#hue)))
+    this.#alphaBar?.setAttribute('aria-valuenow', String(Math.round(this.#alpha * 100)))
+  }
+
+  /** @type {(e: PointerEvent) => void} */
   #handleSvDrag = (e) => {
     if (!this.#svArea) return
     const rect = this.#svArea.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
     this.#sat = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     this.#val = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height))
     this.#updateUI()
     this.#options.onChange?.(this.#toCss())
   }
 
-  /** @type {(e: MouseEvent) => void} */
+  /** @type {(e: PointerEvent) => void} */
   #handleHueDrag = (e) => {
     if (!this.#hueBar) return
     const rect = this.#hueBar.getBoundingClientRect()
+    if (rect.width <= 0) return
     this.#hue = Math.max(0, Math.min(360, (e.clientX - rect.left) / rect.width * 360))
     this.#updateUI()
     this.#options.onChange?.(this.#toCss())
   }
 
-  /** @type {(e: MouseEvent) => void} */
+  /** @type {(e: PointerEvent) => void} */
   #handleAlphaDrag = (e) => {
     if (!this.#alphaBar) return
     const rect = this.#alphaBar.getBoundingClientRect()
+    if (rect.width <= 0) return
     this.#alpha = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     this.#updateUI()
     this.#options.onChange?.(this.#toCss())
   }
 
-  /**
-   * @param {(e: MouseEvent) => void} handler
-   * @param {MouseEvent} e
-   */
-  #startDrag(handler, e) {
+  /** @param {KeyboardEvent} e */
+  #handleSvKeydown = (e) => {
+    const step = e.shiftKey ? 0.1 : 0.01
+    let handled = true
+    switch (e.key) {
+      case 'ArrowLeft': this.#sat = Math.max(0, this.#sat - step); break
+      case 'ArrowRight': this.#sat = Math.min(1, this.#sat + step); break
+      case 'ArrowDown': this.#val = Math.max(0, this.#val - step); break
+      case 'ArrowUp': this.#val = Math.min(1, this.#val + step); break
+      case 'Home': this.#sat = 0; break
+      case 'End': this.#sat = 1; break
+      default: handled = false
+    }
+    if (handled) this.#commitKeyboardChange(e)
+  }
+
+  /** @param {KeyboardEvent} e */
+  #handleHueKeydown = (e) => {
+    const step = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 10 : 1
+    let handled = true
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'ArrowDown':
+      case 'PageDown': this.#hue = (this.#hue - step + 360) % 360; break
+      case 'ArrowRight':
+      case 'ArrowUp':
+      case 'PageUp': this.#hue = (this.#hue + step) % 360; break
+      case 'Home': this.#hue = 0; break
+      case 'End': this.#hue = 359; break
+      default: handled = false
+    }
+    if (handled) this.#commitKeyboardChange(e)
+  }
+
+  /** @param {KeyboardEvent} e */
+  #handleAlphaKeydown = (e) => {
+    const step = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 0.1 : 0.01
+    let handled = true
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'ArrowDown':
+      case 'PageDown': this.#alpha = Math.max(0, this.#alpha - step); break
+      case 'ArrowRight':
+      case 'ArrowUp':
+      case 'PageUp': this.#alpha = Math.min(1, this.#alpha + step); break
+      case 'Home': this.#alpha = 0; break
+      case 'End': this.#alpha = 1; break
+      default: handled = false
+    }
+    if (handled) this.#commitKeyboardChange(e)
+  }
+
+  /** @param {KeyboardEvent} e */
+  #commitKeyboardChange(e) {
     e.preventDefault()
     e.stopPropagation()
+    this.#updateUI()
+    this.#options.onChange?.(this.#toCss())
+  }
+
+  /**
+   * @param {(e: PointerEvent) => void} handler
+   * @param {PointerEvent} e
+   */
+  #startDrag(handler, e) {
+    if (this.#destroyed) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    this.#stopDrag?.()
+    const target = /** @type {HTMLElement} */ (e.currentTarget)
+    target.focus({ preventScroll: true })
+    const pointerId = e.pointerId
+    try { target.setPointerCapture(pointerId) } catch { /* synthetic or already released pointer */ }
     handler(e)
-    const onMove = (/** @type {MouseEvent} */ ev) => { ev.preventDefault(); handler(ev) }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
+    const onMove = (/** @type {PointerEvent} */ ev) => {
+      if (ev.pointerId !== pointerId) return
+      ev.preventDefault()
+      handler(ev)
     }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
+    const onUp = (/** @type {PointerEvent} */ ev) => {
+      if (ev.pointerId === pointerId) stop()
+    }
+    const stop = () => {
+      target.removeEventListener('pointermove', onMove)
+      target.removeEventListener('pointerup', onUp)
+      target.removeEventListener('pointercancel', onUp)
+      try {
+        if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+      } catch { /* pointer capture may already have ended */ }
+      if (this.#stopDrag === stop) this.#stopDrag = null
+    }
+    this.#stopDrag = stop
+    target.addEventListener('pointermove', onMove)
+    target.addEventListener('pointerup', onUp)
+    target.addEventListener('pointercancel', onUp)
   }
 }

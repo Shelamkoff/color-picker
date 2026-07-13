@@ -61,7 +61,7 @@ export function hsvToHsl(h: number, s: number, v: number): {
  * @param {string} fmt - 'HEX', 'RGB', or 'HSL'
  * @returns {string}
  */
-export function formatColor(h: number, s: number, v: number, a: number, fmt: string): string;
+export function formatColor(h: number, s: number, v: number, a: number, fmt: ColorFormat): string;
 /**
  * Round alpha to 2 decimal places.
  * @param {number} a
@@ -93,4 +93,5 @@ export function parseColorInput(str: string): {
  * No DOM dependencies.
  */
 /** Available color format names */
-export const COLOR_FORMATS: string[];
+export type ColorFormat = 'HEX' | 'RGB' | 'HSL';
+export const COLOR_FORMATS: readonly ColorFormat[];
