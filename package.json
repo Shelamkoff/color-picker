@@ -19,6 +19,7 @@
   "files": ["dist", "README.md", "README.ru.md", "LICENSE"],
   "scripts": {
     "build": "node scripts/build-package.mjs",
+    "demo": "node ../scripts/dev-server.mjs /color-picker/demo.html",
     "test": "node --test test/*.test.js",
     "prepublishOnly": "npm test",
     "prepack": "npm run build"
