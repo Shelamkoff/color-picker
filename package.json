@@ -1,7 +1,7 @@
 {
   "name": "@shelamkoff/color-picker",
   "version": "1.0.0",
-  "description": "Framework-agnostic accessible color picker and color conversion utilities",
+  "description": "Accessible framework-agnostic color picker with EyeDropper support and HEX, RGB, HSL, and HSV conversion utilities",
   "type": "module",
   "sideEffects": ["**/*.css"],
   "exports": {
@@ -19,12 +19,26 @@
   "files": ["dist", "README.md", "README.ru.md", "LICENSE"],
   "scripts": {
     "build": "node scripts/build-package.mjs",
-    "demo": "node ../scripts/dev-server.mjs /color-picker/demo.html",
+    "demo": "node scripts/dev-server.mjs /demo.html",
     "test": "node --test test/*.test.js",
     "prepublishOnly": "npm test",
     "prepack": "npm run build"
   },
-  "keywords": ["color-picker", "color", "accessibility", "framework-agnostic", "esm"],
+  "keywords": [
+    "javascript",
+    "color-picker",
+    "color",
+    "color-converter",
+    "eyedropper",
+    "hex",
+    "rgb",
+    "hsl",
+    "hsv",
+    "accessibility",
+    "vanilla-js",
+    "framework-agnostic",
+    "esm"
+  ],
   "author": "Shelamkoff",
   "engines": { "node": ">=20" },
   "license": "MIT",
@@ -32,7 +46,7 @@
     "type": "git",
     "url": "git+https://github.com/Shelamkoff/color-picker.git"
   },
-  "homepage": "https://github.com/Shelamkoff/color-picker#readme",
+  "homepage": "https://shelamkoff.github.io/color-picker/",
   "bugs": { "url": "https://github.com/Shelamkoff/color-picker/issues" },
   "publishConfig": {
     "access": "public",

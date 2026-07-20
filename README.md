@@ -1,8 +1,19 @@
 # @shelamkoff/color-picker
 
-Framework-agnostic color picker with an optional EyeDropper integration and pure HEX, RGB, HSL, and HSV conversion utilities. Version `1.0.0` is an ESM package for modern browsers.
+[![npm version](https://img.shields.io/npm/v/%40shelamkoff%2Fcolor-picker)](https://www.npmjs.com/package/@shelamkoff/color-picker)
+[![Live demo](https://img.shields.io/badge/demo-live-4357b4)](https://shelamkoff.github.io/color-picker/)
+[![MIT license](https://img.shields.io/badge/license-MIT-2ea44f)](./LICENSE)
 
-[Русская версия](./README.ru.md)
+Accessible framework-agnostic color picker with optional EyeDropper integration and pure HEX, RGB, HSL, and HSV conversion utilities. Published as an ESM package for modern browsers.
+
+[Live demo](https://shelamkoff.github.io/color-picker/) · [npm](https://www.npmjs.com/package/@shelamkoff/color-picker) · [Русская версия](./README.ru.md)
+
+## Highlights
+
+- Saturation/value, hue, alpha, and output-format controls.
+- Pointer, touch, and keyboard interaction with optional native EyeDropper support.
+- Pure color parsing, formatting, and conversion utilities in a separate entry point.
+- Framework-independent lifecycle with callbacks and explicit cleanup.
 
 ## Installation
 
@@ -95,13 +106,16 @@ Exports include `COLOR_FORMATS`, `ColorFormat`, `hsvToHex`, `rgbToHsv`, `hexToHs
 
 ## Demo
 
-From this package directory:
+[Open the live demo](https://shelamkoff.github.io/color-picker/) to try color selection, alpha, format switching, and the native EyeDropper when supported.
+
+To run the same demo locally:
 
 ```bash
+npm install
 npm run demo
 ```
 
-From the workspace root, use `npm run demo:color-picker`. The command opens the demo URL through the local workspace server.
+Open `http://127.0.0.1:4173/demo.html`.
 
 ## Package entry points
 
