@@ -1,10 +1,10 @@
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = resolve(fileURLToPath(new URL('../', import.meta.url)))
+const root = await realpath(fileURLToPath(new URL('../', import.meta.url)))
 const host = process.env.HOST ?? '127.0.0.1'
 const port = Number.parseInt(process.env.PORT ?? '4173', 10)
 const requestedEntry = process.argv[2] ?? '/demo.html'
@@ -38,25 +38,36 @@ function send(response, status, message) {
 }
 
 async function resolveRequestPath(requestUrl) {
-  const url = new URL(requestUrl ?? '/', `http://${host}:${port}`)
   let pathname
   try {
+    const url = new URL(requestUrl ?? '/', 'http://localhost')
     pathname = decodeURIComponent(url.pathname)
   } catch {
     return null
   }
 
   if (pathname === '/') pathname = entryPath
-  const candidate = resolve(root, `.${pathname}`)
-  const fromRoot = relative(root, candidate)
-  if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) return null
+  let candidate = resolve(root, `.${pathname}`)
+  if (!isPublicPath(candidate)) return null
 
   try {
-    const info = await stat(candidate)
-    return info.isDirectory() ? join(candidate, 'index.html') : candidate
+    candidate = await realpath(candidate)
+    if (!isPublicPath(candidate)) return null
+    let info = await stat(candidate)
+    if (info.isDirectory()) {
+      candidate = await realpath(join(candidate, 'index.html'))
+      if (!isPublicPath(candidate)) return null
+      info = await stat(candidate)
+    }
+    return info.isFile() ? candidate : null
   } catch {
     return null
   }
+}
+
+function isPublicPath(candidate) {
+  const fromRoot = relative(root, candidate)
+  return !isAbsolute(fromRoot) && !fromRoot.split(sep).some(part => part.startsWith('.'))
 }
 
 const server = createServer(async (request, response) => {
@@ -71,16 +82,25 @@ const server = createServer(async (request, response) => {
     return
   }
 
-  response.writeHead(200, {
-    'Content-Type': contentTypes.get(extname(filePath).toLowerCase()) ?? 'application/octet-stream',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
+  const stream = createReadStream(filePath)
+  stream.once('error', () => {
+    if (!response.headersSent) send(response, 404, 'Not found')
+    else response.destroy()
   })
-  if (request.method === 'HEAD') {
-    response.end()
-    return
-  }
-  createReadStream(filePath).pipe(response)
+  response.once('close', () => stream.destroy())
+  stream.once('open', () => {
+    response.writeHead(200, {
+      'Content-Type': contentTypes.get(extname(filePath).toLowerCase()) ?? 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    if (request.method === 'HEAD') {
+      stream.destroy()
+      response.end()
+      return
+    }
+    stream.pipe(response)
+  })
 })
 
 server.on('error', error => {
@@ -89,7 +109,7 @@ server.on('error', error => {
 })
 
 server.listen(port, host, () => {
-  console.log(`Color Picker demo: http://${host}:${port}${entryPath}`)
+  console.log(`Color Picker demo: http://${host}:${server.address().port}${entryPath}`)
 })
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
