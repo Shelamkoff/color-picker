@@ -70,6 +70,8 @@ export function formatColor(h: number, s: number, v: number, a: number, fmt: Col
 export function roundAlpha(a: number): number;
 /**
  * Parse rgb/rgba(...) CSS string to hex + alpha.
+ * Accepts modern and comma syntax, numeric/percentage channels and alpha.
+ * Channels are clamped; malformed input returns opaque white.
  * @param {string} css
  * @returns {{ hex: string, alpha: number }}
  */
@@ -78,7 +80,11 @@ export function parseRgbCss(css: string): {
     alpha: number;
 };
 /**
- * Parse any color string (hex, rgb, rgba, hsl, hsla) to HSVA or null.
+ * Parse HEX, named colors, RGB(A), HSL(A), or OKLCH to sRGB HSVA.
+ * Supports modern space/slash and legacy comma syntax where applicable.
+ * Malformed or out-of-range input returns null; modern `none` resolves to zero.
+ * OKLCH chroma is nonnegative and unbounded; colors are gamut-mapped to sRGB.
+ * Contextual values such as currentColor, var(), and calc() are not resolved.
  * @param {string} str
  * @returns {{ h: number, s: number, v: number, a: number } | null}
  */

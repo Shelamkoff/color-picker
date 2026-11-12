@@ -6,6 +6,7 @@ const files = [
   'index.js', 'index.d.ts',
   'ColorPicker.js', 'ColorPicker.d.ts',
   'colorMath.js', 'colorMath.d.ts',
+  'namedColors.js', 'oklch.js',
   'colorPicker.css',
 ]
 

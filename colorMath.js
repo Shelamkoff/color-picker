@@ -3,11 +3,30 @@
  * No DOM dependencies.
  */
 
+import { NAMED_COLORS } from './namedColors.js'
+import { oklchToRgb } from './oklch.js'
+
 /** Available color format names */
 export const COLOR_FORMATS = Object.freeze(['HEX', 'RGB', 'HSL'])
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
-const normalizeHue = (value) => ((value % 360) + 360) % 360
+const asciiLowercase = (value) => value.replace(/[A-Z]/g, character => character.toLowerCase())
+
+function normalizeHue(value) {
+  const hue = value % 360
+  if (hue < 0) return (hue + 360) % 360
+  return hue === 0 ? 0 : hue
+}
+
+function toRgbByte(channel) {
+  const value = channel * 255
+  const half = Math.floor(value) + 0.5
+  // RGB -> HSV -> RGB arithmetic can move an exact half-byte by a few
+  // floating-point ulps. Correct only that final quantization boundary;
+  // retain the full channel precision everywhere else.
+  const roundedValue = Math.abs(value - half) <= 4 * Number.EPSILON * 255 ? half : value
+  return Math.round(roundedValue)
+}
 
 /**
  * Convert HSV to hex string.
@@ -85,9 +104,9 @@ export function hsvToRgb(h, s, v) {
   else if (h < 300) { r = x; g = 0; b = c }
   else { r = c; g = 0; b = x }
   return {
-    r: Math.round((r + m) * 255),
-    g: Math.round((g + m) * 255),
-    b: Math.round((b + m) * 255),
+    r: toRgbByte(r + m),
+    g: toRgbByte(g + m),
+    b: toRgbByte(b + m),
   }
 }
 
@@ -148,67 +167,132 @@ export function roundAlpha(a) {
   return Math.round(clamp(Number.isFinite(a) ? a : 1, 0, 1) * 100) / 100
 }
 
+// Validate complete CSS number tokens. The decimal alternatives cannot both
+// consume a decimal point, avoiding ambiguous runs of digit quantifiers.
+const NUMBER_TOKEN = /^[+-]?(?:\d*\.\d+|\d+)(?:e[+-]?\d+)?$/
+const HUE_TOKEN = /^([+-]?(?:\d*\.\d+|\d+)(?:e[+-]?\d+)?)(deg|grad|rad|turn)?$/
+
+function parseFunction(value) {
+  const match = value.match(/^(rgba?|hsla?|oklch)\(([\s\S]*)\)$/)
+  if (!match) return null
+  const [, name, body] = match
+  const legacy = body.includes(',')
+  if (legacy) {
+    if (name === 'oklch' || body.includes('/')) return null
+    const tokens = body.split(',', 5).map(token => token.trim())
+    if (tokens.length !== 3 && tokens.length !== 4) return null
+    return { name, components: tokens.slice(0, 3), alpha: tokens[3], legacy }
+  }
+  const parts = body.split('/', 3)
+  if (parts.length > 2) return null
+  const components = parts[0].trim().split(/[\t\n\f\r ]+/, 4)
+  if (components.length !== 3) return null
+  return { name, components, alpha: parts[1]?.trim(), legacy }
+}
+
+function parseComponent(token, numberScale, percentScale, allowNone) {
+  if (allowNone && token === 'none') return 0
+  const percentage = token.endsWith('%')
+  const number = percentage ? token.slice(0, -1) : token
+  if (!NUMBER_TOKEN.test(number)) return null
+  return Number(number) / (percentage ? percentScale : numberScale)
+}
+
+function parseAlpha(token, allowNone) {
+  return token === undefined ? 1 : parseComponent(token, 1, 100, allowNone)
+}
+
+function parseHue(token, allowNone) {
+  if (allowNone && token === 'none') return 0
+  const match = token.match(HUE_TOKEN)
+  if (!match) return null
+  const value = Number(match[1])
+  if (!Number.isFinite(value)) return null
+  const unit = match[2] ?? 'deg'
+  const period = unit === 'turn' ? 1 : unit === 'grad' ? 400 : unit === 'rad' ? 2 * Math.PI : 360
+  // Reduce in the source unit before converting to degrees so large finite
+  // turns/radians cannot overflow during multiplication.
+  return normalizeHue((value % period) * (360 / period))
+}
+
+function inUnitRange(value) {
+  return value !== null && Number.isFinite(value) && value >= 0 && value <= 1
+}
+
+function parseRgbFunction(parsed, strict) {
+  if (!parsed || (parsed.name !== 'rgb' && parsed.name !== 'rgba')) return null
+  const { components, alpha, legacy } = parsed
+  // Comma syntax must use either three percentages or three numbers.
+  if (legacy && components.some(token => token.endsWith('%') !== components[0].endsWith('%'))) return null
+  const [r, g, b] = components.map(token => parseComponent(token, 255, 100, !legacy))
+  const a = parseAlpha(alpha, !legacy)
+  const values = [r, g, b, a]
+  if (values.some(value => value === null) || (strict && !values.every(inUnitRange))) return null
+  return { r: clamp(r, 0, 1), g: clamp(g, 0, 1), b: clamp(b, 0, 1), a: clamp(a, 0, 1) }
+}
+
 /**
  * Parse rgb/rgba(...) CSS string to hex + alpha.
+ * Accepts modern and comma syntax, numeric/percentage channels and alpha.
+ * Channels are clamped; malformed input returns opaque white.
  * @param {string} css
  * @returns {{ hex: string, alpha: number }}
  */
 export function parseRgbCss(css) {
-  const m = css.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/i)
-  if (!m) return { hex: '#ffffff', alpha: 1 }
-  const h = (/** @type {string} */ n) => clamp(Number(n), 0, 255).toString(16).padStart(2, '0')
-  const hex = '#' + h(/** @type {string} */ (m[1])) + h(/** @type {string} */ (m[2])) + h(/** @type {string} */ (m[3]))
-  const parsedAlpha = m[4] !== undefined ? parseFloat(m[4]) : 1
-  const alpha = clamp(Number.isFinite(parsedAlpha) ? parsedAlpha : 1, 0, 1)
-  return { hex, alpha }
+  if (typeof css !== 'string') return { hex: '#ffffff', alpha: 1 }
+  const rgb = parseRgbFunction(parseFunction(asciiLowercase(css.trim())), false)
+  if (!rgb) return { hex: '#ffffff', alpha: 1 }
+  const hex = '#' + [rgb.r, rgb.g, rgb.b].map(channel => Math.round(channel * 255).toString(16).padStart(2, '0')).join('')
+  return { hex, alpha: rgb.a }
 }
 
 /**
- * Parse any color string (hex, rgb, rgba, hsl, hsla) to HSVA or null.
+ * Parse HEX, named colors, RGB(A), HSL(A), or OKLCH to sRGB HSVA.
+ * Supports modern space/slash and legacy comma syntax where applicable.
+ * Malformed or out-of-range input returns null; modern `none` resolves to zero.
+ * OKLCH chroma is nonnegative and unbounded; colors are gamut-mapped to sRGB.
+ * Contextual values such as currentColor, var(), and calc() are not resolved.
  * @param {string} str
  * @returns {{ h: number, s: number, v: number, a: number } | null}
  */
 export function parseColorInput(str) {
-  str = str.trim().toLowerCase()
+  if (typeof str !== 'string') return null
+  str = asciiLowercase(str.trim())
 
-  // #rrggbbaa
-  let m = str.match(/^#([0-9a-f]{8})$/)
-  if (m && m[1]) {
-    const hsv = hexToHsv('#' + m[1].slice(0, 6))
-    const a = parseInt(m[1].slice(6, 8), 16) / 255
-    return { ...hsv, a }
+  if (str.startsWith('#')) {
+    if (!/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(str)) return null
+    let hex = str.slice(1)
+    if (hex.length <= 4) hex = [...hex].map(digit => digit + digit).join('')
+    return { ...hexToHsv(hex.slice(0, 6)), a: hex.length === 8 ? parseInt(hex.slice(6), 16) / 255 : 1 }
+  }
+  if (str === 'transparent') return { h: 0, s: 0, v: 0, a: 0 }
+  if (Object.hasOwn(NAMED_COLORS, str)) return { ...hexToHsv(NAMED_COLORS[str]), a: 1 }
+
+  const parsed = parseFunction(str)
+  if (!parsed) return null
+  if (parsed.name === 'rgb' || parsed.name === 'rgba') {
+    const rgb = parseRgbFunction(parsed, true)
+    return rgb ? { ...rgbToHsv(rgb.r, rgb.g, rgb.b), a: rgb.a } : null
   }
 
-  // #rrggbb
-  m = str.match(/^#([0-9a-f]{6})$/)
-  if (m && m[1]) return { ...hexToHsv('#' + m[1]), a: 1 }
-
-  // #rgb
-  m = str.match(/^#([0-9a-f]{3})$/)
-  if (m && m[1]) {
-    const e = m[1]
-    return { ...hexToHsv('#' + e[0] + e[0] + e[1] + e[1] + e[2] + e[2]), a: 1 }
+  const { name, components, alpha, legacy } = parsed
+  const a = parseAlpha(alpha, !legacy)
+  if (!inUnitRange(a)) return null
+  if (name === 'hsl' || name === 'hsla') {
+    if (legacy && (!components[1].endsWith('%') || !components[2].endsWith('%'))) return null
+    const h = parseHue(components[0], !legacy)
+    const sl = parseComponent(components[1], 100, 100, !legacy)
+    const l = parseComponent(components[2], 100, 100, !legacy)
+    if (h === null || !inUnitRange(sl) || !inUnitRange(l)) return null
+    const v = l + sl * Math.min(l, 1 - l)
+    const s = v === 0 ? 0 : 2 * (1 - l / v)
+    return { h, s, v, a }
   }
 
-  // rgb(r, g, b) or rgba(r, g, b, a)
-  m = str.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+))?\s*\)$/)
-  if (m) {
-    const r = Number(m[1]), g = Number(m[2]), b = Number(m[3])
-    const a = m[4] !== undefined ? parseFloat(m[4]) : 1
-    if (r > 255 || g > 255 || b > 255 || !Number.isFinite(a) || a < 0 || a > 1) return null
-    return { ...rgbToHsv(r / 255, g / 255, b / 255), a }
-  }
-
-  // hsl(h, s%, l%) or hsla(h, s%, l%, a)
-  m = str.match(/^hsla?\s*\(\s*(-?[\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*(?:,\s*([\d.]+))?\s*\)$/)
-  if (m) {
-    const hh = normalizeHue(Number(m[1])), sl = Number(m[2]) / 100, l = Number(m[3]) / 100
-    const a = m[4] !== undefined ? parseFloat(m[4]) : 1
-    if (![hh, sl, l, a].every(Number.isFinite) || sl < 0 || sl > 1 || l < 0 || l > 1 || a < 0 || a > 1) return null
-    const vv = l + sl * Math.min(l, 1 - l)
-    const sv = vv === 0 ? 0 : 2 * (1 - l / vv)
-    return { h: hh, s: sv, v: vv, a }
-  }
-
-  return null
+  const l = parseComponent(components[0], 1, 100, true)
+  const c = parseComponent(components[1], 1, 250, true)
+  const h = parseHue(components[2], true)
+  if (!inUnitRange(l) || c === null || !Number.isFinite(c) || c < 0 || h === null) return null
+  const rgb = oklchToRgb(l, c, h)
+  return { ...rgbToHsv(rgb.r, rgb.g, rgb.b), a }
 }
