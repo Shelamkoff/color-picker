@@ -1,5 +1,5 @@
 import {
-  COLOR_FORMATS, hexToHsv, hsvToRgb,
+  COLOR_FORMATS, hsvToRgb,
   formatColor, roundAlpha, parseColorInput,
 } from './colorMath.js'
 
@@ -48,9 +48,13 @@ export class ColorPicker {
   #alpha = 1
   #colorFormat = 'HEX'
   #destroyed = false
+  #isOpen = false
+  #inputDirty = false
   /** @type {(() => void) | null} */
   #stopDrag = null
   #asyncVersion = 0
+  /** @type {AbortController | null} */
+  #eyeDropperController = null
   #listenerController = new AbortController()
 
   // DOM refs
@@ -95,32 +99,40 @@ export class ColorPicker {
     if (this.#destroyed) throw new Error('Cannot open a destroyed ColorPicker')
     const parsed = parseColorInput(hex)
     if (!parsed) throw new TypeError(`Invalid color: ${hex}`)
+    const resolvedAlpha = alpha ?? parsed.a
+    if (!Number.isFinite(resolvedAlpha)) throw new RangeError('Color alpha must be a finite number')
+    this.#stopInteractions()
     this.#hue = parsed.h
     this.#sat = parsed.s
     this.#val = parsed.v
-    const resolvedAlpha = alpha ?? parsed.a
-    if (!Number.isFinite(resolvedAlpha)) throw new RangeError('Color alpha must be a finite number')
     this.#alpha = Math.max(0, Math.min(1, resolvedAlpha))
+    this.#isOpen = true
     this.#updateUI()
     this.#el.style.display = ''
   }
 
   close() {
-    this.#asyncVersion += 1
-    this.#stopDrag?.()
-    this.#stopDrag = null
+    this.#isOpen = false
+    this.#stopInteractions()
     this.#el.style.display = 'none'
   }
 
   destroy() {
     if (this.#destroyed) return
     this.#destroyed = true
-    this.#asyncVersion += 1
-    this.#stopDrag?.()
-    this.#stopDrag = null
+    this.#isOpen = false
+    this.#stopInteractions()
     this.#listenerController.abort()
     this.#options = {}
     this.#el.remove()
+  }
+
+  #stopInteractions() {
+    this.#asyncVersion += 1
+    this.#eyeDropperController?.abort()
+    this.#eyeDropperController = null
+    this.#stopDrag?.()
+    this.#stopDrag = null
   }
 
   #build() {
@@ -133,6 +145,12 @@ export class ColorPicker {
       if (e.target === this.#colorInput) return
       e.preventDefault()
       e.stopPropagation()
+    }, { signal: this.#listenerController.signal })
+    root.addEventListener('keydown', (e) => {
+      if (!this.#isOpen || e.key !== 'Escape' || e.isComposing) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.close()
     }, { signal: this.#listenerController.signal })
 
     // SV area
@@ -175,6 +193,7 @@ export class ColorPicker {
     this.#formatBtn.textContent = this.#colorFormat
     this.#formatBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation()
+      if (!this.#isOpen) return
       const idx = COLOR_FORMATS.indexOf(this.#colorFormat)
       this.#colorFormat = COLOR_FORMATS[(idx + 1) % COLOR_FORMATS.length] ?? 'HEX'
       this.#updateUI()
@@ -185,8 +204,10 @@ export class ColorPicker {
     this.#colorInput.type = 'text'
     this.#colorInput.className = 'oe-color-hex'
     this.#colorInput.spellcheck = false
+    this.#colorInput.setAttribute('aria-label', 'Color value')
     this.#colorInput.addEventListener('keydown', (e) => {
       e.stopPropagation()
+      if (!this.#isOpen || e.isComposing) return
       if (e.key === 'Enter') {
         e.preventDefault()
         this.#applyFromInput()
@@ -203,21 +224,10 @@ export class ColorPicker {
     eyedropperBtn.setAttribute('aria-label', 'Pick color from screen')
     eyedropperBtn.innerHTML = ICON_EYEDROPPER
     // @ts-ignore — EyeDropper Web API
-    if (typeof window.EyeDropper === 'undefined') eyedropperBtn.style.display = 'none'
+    if (typeof window.EyeDropper !== 'function') eyedropperBtn.style.display = 'none'
     eyedropperBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation()
-      // @ts-ignore
-      if (typeof window.EyeDropper === 'undefined') return
-      // @ts-ignore
-      const dropper = new window.EyeDropper()
-      const asyncVersion = ++this.#asyncVersion
-      dropper.open().then((/** @type {{ sRGBHex: string }} */ result) => {
-        if (this.#destroyed || this.#asyncVersion !== asyncVersion) return
-        const hsv = hexToHsv(result.sRGBHex)
-        this.#hue = hsv.h; this.#sat = hsv.s; this.#val = hsv.v; this.#alpha = 1
-        this.#updateUI()
-        this.#options.onChange?.(this.#toCss())
-      }).catch(() => {})
+      void this.#pickFromScreen()
     }, { signal: this.#listenerController.signal })
 
     // Apply
@@ -226,7 +236,7 @@ export class ColorPicker {
     applyBtn.innerHTML = ICON_CHECK
     applyBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation()
-      this.#options.onApply?.(this.#toCss())
+      this.#applyFromInput()
     }, { signal: this.#listenerController.signal })
 
     // Remove
@@ -236,6 +246,7 @@ export class ColorPicker {
       removeBtn.innerHTML = ICON_REMOVE
       removeBtn.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation()
+        if (!this.#isOpen) return
         this.#options.onRemove?.()
       }, { signal: this.#listenerController.signal })
       bottom.append(this.#previewEl, this.#formatBtn, this.#colorInput, eyedropperBtn, applyBtn, removeBtn)
@@ -247,7 +258,33 @@ export class ColorPicker {
     return root
   }
 
-  #updateUI() {
+  async #pickFromScreen() {
+    // @ts-ignore — EyeDropper Web API
+    if (!this.#isOpen || typeof window.EyeDropper !== 'function') return
+    this.#eyeDropperController?.abort()
+    const controller = new AbortController()
+    this.#eyeDropperController = controller
+    const asyncVersion = ++this.#asyncVersion
+    let result
+    try {
+      // @ts-ignore — EyeDropper Web API
+      const dropper = new window.EyeDropper()
+      result = await dropper.open({ signal: controller.signal })
+    } catch {
+      return
+    } finally {
+      if (this.#eyeDropperController === controller) this.#eyeDropperController = null
+    }
+    if (!this.#isOpen || this.#destroyed || this.#asyncVersion !== asyncVersion) return
+    const parsed = parseColorInput(result?.sRGBHex)
+    if (!parsed) return
+    this.#hue = parsed.h; this.#sat = parsed.s; this.#val = parsed.v; this.#alpha = 1
+    this.#updateUI()
+    this.#options.onChange?.(this.#toCss())
+  }
+
+  /** @param {boolean} [syncInput] Preserve the draft and caret while typing. */
+  #updateUI(syncInput = true) {
     if (!this.#svArea || !this.#svCursor || !this.#hueCursor || !this.#alphaCursor || !this.#alphaBar || !this.#previewEl || !this.#colorInput || !this.#formatBtn) return
 
     this.#svArea.style.backgroundColor = `hsl(${this.#hue}, 100%, 50%)`
@@ -263,8 +300,12 @@ export class ColorPicker {
       `linear-gradient(to right, rgba(${rgbStr}, 0), rgb(${rgbStr})), var(--oe-checker)`
 
     this.#svCursor.style.borderColor = (this.#val > 0.6 && this.#sat < 0.4) ? '#333' : '#fff'
-    this.#previewEl.style.backgroundColor = `rgba(${rgbStr}, ${this.#alpha})`
-    this.#colorInput.value = formatColor(this.#hue, this.#sat, this.#val, this.#alpha, this.#colorFormat)
+    this.#previewEl.style.setProperty('--oe-preview-color', `rgba(${rgbStr}, ${this.#alpha})`)
+    if (syncInput) {
+      this.#colorInput.value = formatColor(this.#hue, this.#sat, this.#val, this.#alpha, this.#colorFormat)
+      this.#inputDirty = false
+      this.#colorInput.removeAttribute('aria-invalid')
+    }
     this.#formatBtn.textContent = this.#colorFormat
   }
 
@@ -281,34 +322,31 @@ export class ColorPicker {
   }
 
   #applyFromInput() {
-    if (!this.#colorInput) return
-    const parsed = parseColorInput(this.#colorInput.value)
-    if (parsed) {
+    if (!this.#isOpen || !this.#colorInput) return
+    if (this.#inputDirty) {
+      const parsed = parseColorInput(this.#colorInput.value)
+      if (!parsed) {
+        this.#colorInput.setAttribute('aria-invalid', 'true')
+        return
+      }
       this.#hue = parsed.h; this.#sat = parsed.s; this.#val = parsed.v; this.#alpha = parsed.a
-      this.#updateUI()
-      this.#options.onApply?.(this.#toCss())
     }
+    this.#updateUI()
+    this.#options.onApply?.(this.#toCss())
   }
 
   #onInputChange() {
-    if (!this.#colorInput || !this.#svArea || !this.#svCursor || !this.#hueCursor || !this.#alphaCursor || !this.#alphaBar || !this.#previewEl) return
+    if (!this.#isOpen || !this.#colorInput) return
+    this.#inputDirty = true
     const parsed = parseColorInput(this.#colorInput.value)
-    if (parsed) {
-      this.#hue = parsed.h; this.#sat = parsed.s; this.#val = parsed.v; this.#alpha = parsed.a
-      this.#svArea.style.backgroundColor = `hsl(${this.#hue}, 100%, 50%)`
-      this.#svCursor.style.left = `${this.#sat * 100}%`
-      this.#svCursor.style.top = `${(1 - this.#val) * 100}%`
-      this.#hueCursor.style.left = `${(this.#hue / 360) * 100}%`
-      this.#alphaCursor.style.left = `${this.#alpha * 100}%`
-      const { r, g, b } = hsvToRgb(this.#hue, this.#sat, this.#val)
-      this.#svCursor.style.borderColor = (this.#val > 0.6 && this.#sat < 0.4) ? '#333' : '#fff'
-      this.#previewEl.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${this.#alpha})`
-      const rgbStr = `${r}, ${g}, ${b}`
-      this.#alphaBar.style.background =
-        `linear-gradient(to right, rgba(${rgbStr}, 0), rgb(${rgbStr})), var(--oe-checker)`
-      this.#updateSliderAria()
-      this.#options.onChange?.(this.#toCss())
+    if (!parsed) {
+      this.#colorInput.setAttribute('aria-invalid', 'true')
+      return
     }
+    this.#colorInput.removeAttribute('aria-invalid')
+    this.#hue = parsed.h; this.#sat = parsed.s; this.#val = parsed.v; this.#alpha = parsed.a
+    this.#updateUI(false)
+    this.#options.onChange?.(this.#toCss())
   }
 
   #updateSliderAria() {
@@ -351,6 +389,7 @@ export class ColorPicker {
 
   /** @param {KeyboardEvent} e */
   #handleSvKeydown = (e) => {
+    if (!this.#isOpen) return
     const step = e.shiftKey ? 0.1 : 0.01
     let handled = true
     switch (e.key) {
@@ -367,6 +406,7 @@ export class ColorPicker {
 
   /** @param {KeyboardEvent} e */
   #handleHueKeydown = (e) => {
+    if (!this.#isOpen) return
     const step = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 10 : 1
     let handled = true
     switch (e.key) {
@@ -385,6 +425,7 @@ export class ColorPicker {
 
   /** @param {KeyboardEvent} e */
   #handleAlphaKeydown = (e) => {
+    if (!this.#isOpen) return
     const step = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 0.1 : 0.01
     let handled = true
     switch (e.key) {
@@ -414,36 +455,51 @@ export class ColorPicker {
    * @param {PointerEvent} e
    */
   #startDrag(handler, e) {
-    if (this.#destroyed) return
+    if (!this.#isOpen || this.#destroyed) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
     this.#stopDrag?.()
     const target = /** @type {HTMLElement} */ (e.currentTarget)
-    target.focus({ preventScroll: true })
+    const view = target.ownerDocument.defaultView
     const pointerId = e.pointerId
-    try { target.setPointerCapture(pointerId) } catch { /* synthetic or already released pointer */ }
-    handler(e)
+    let active = true
+    const update = (/** @type {PointerEvent} */ event) => {
+      try { handler(event) } catch (error) {
+        stop()
+        throw error
+      }
+    }
     const onMove = (/** @type {PointerEvent} */ ev) => {
-      if (ev.pointerId !== pointerId) return
+      if (!active || ev.pointerId !== pointerId) return
       ev.preventDefault()
-      handler(ev)
+      update(ev)
     }
     const onUp = (/** @type {PointerEvent} */ ev) => {
       if (ev.pointerId === pointerId) stop()
     }
     const stop = () => {
+      if (!active) return
+      active = false
       target.removeEventListener('pointermove', onMove)
       target.removeEventListener('pointerup', onUp)
       target.removeEventListener('pointercancel', onUp)
+      target.removeEventListener('lostpointercapture', onUp)
+      view?.removeEventListener('blur', stop)
+      if (this.#stopDrag === stop) this.#stopDrag = null
       try {
         if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
       } catch { /* pointer capture may already have ended */ }
-      if (this.#stopDrag === stop) this.#stopDrag = null
     }
     this.#stopDrag = stop
     target.addEventListener('pointermove', onMove)
     target.addEventListener('pointerup', onUp)
     target.addEventListener('pointercancel', onUp)
+    target.addEventListener('lostpointercapture', onUp)
+    view?.addEventListener('blur', stop)
+    target.focus({ preventScroll: true })
+    if (!active) return
+    try { target.setPointerCapture(pointerId) } catch { /* synthetic or already released pointer */ }
+    if (active) update(e)
   }
 }

@@ -120,10 +120,12 @@
   border-radius: 50%;
   border: 1px solid var(--oe-border, #3f3f46);
   flex-shrink: 0;
-  background: repeating-conic-gradient(
-    rgba(128, 128, 128, 0.25) 0% 25%,
-    transparent 0% 50%
-  ) 0 0 / 6px 6px;
+  background:
+    linear-gradient(var(--oe-preview-color, #fff), var(--oe-preview-color, #fff)),
+    repeating-conic-gradient(
+      rgba(128, 128, 128, 0.25) 0% 25%,
+      transparent 0% 50%
+    ) 0 0 / 6px 6px;
 }
 
 .oe-color-format {
@@ -162,6 +164,10 @@
 
 .oe-color-hex:focus {
   border-color: var(--oe-border-focus, #6366f1);
+}
+
+.oe-color-hex[aria-invalid="true"] {
+  border-color: var(--oe-danger, #ef4444);
 }
 
 .oe-color-btn {
